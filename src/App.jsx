@@ -1,32 +1,67 @@
-import React from "react";
+import React, { useState } from "react";
 
 export default function App() {
-  return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-r from-blue-400 to-blue-600 text-white p-6">
-      <h1 className="text-4xl md:text-5xl font-bold mb-6 text-center">
-        RowXia
-      </h1>
-      <p className="text-xl md:text-2xl mb-8 text-center">
-        “Understand your stroke”
-      </p>
+  const [userVideo, setUserVideo] = useState(null);
+  const [referenceVideo, setReferenceVideo] = useState("");
 
-      <div className="bg-white text-gray-800 rounded-xl shadow-lg p-8 max-w-xl w-full space-y-6">
-        <div>
-          <h2 className="text-2xl font-semibold mb-2">Análisis inteligente</h2>
-          <p>Usa IA para interpretar tus datos de remo y ofrecer información precisa sobre tu técnica.</p>
+  const handleUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setUserVideo(URL.createObjectURL(file));
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-r from-blue-400 to-blue-600 text-white p-6">
+      
+      {/* HEADER */}
+      <div className="text-center mb-10">
+        <h1 className="text-5xl font-bold">RowXia</h1>
+        <p className="text-xl mt-2">“Understand your stroke”</p>
+      </div>
+
+      {/* SUBIDA DE VIDEO */}
+      <div className="bg-white text-gray-800 rounded-xl p-6 max-w-3xl mx-auto shadow-lg mb-8">
+        <h2 className="text-2xl font-semibold mb-4">Sube tu vídeo</h2>
+        <input type="file" accept="video/*" onChange={handleUpload} />
+      </div>
+
+      {/* SELECTOR DE VIDEO DE REFERENCIA */}
+      <div className="bg-white text-gray-800 rounded-xl p-6 max-w-3xl mx-auto shadow-lg mb-8">
+        <h2 className="text-2xl font-semibold mb-4">Vídeo de referencia</h2>
+        <select
+          className="w-full p-2 border rounded"
+          onChange={(e) => setReferenceVideo(e.target.value)}
+        >
+          <option value="">Selecciona un vídeo</option>
+          <option value="/videos/concept2.mp4">Concept2 Técnica</option>
+          <option value="/videos/remo_espanol.mp4">Remo Español Técnica</option>
+        </select>
+      </div>
+
+      {/* COMPARADOR */}
+      <div className="grid md:grid-cols-2 gap-6 max-w-5xl mx-auto">
+        
+        {/* VIDEO USUARIO */}
+        <div className="bg-white rounded-xl p-4 text-black">
+          <h3 className="font-semibold mb-2">Tu vídeo</h3>
+          {userVideo ? (
+            <video src={userVideo} controls className="w-full rounded" />
+          ) : (
+            <p>No has subido ningún vídeo</p>
+          )}
         </div>
-        <div>
-          <h2 className="text-2xl font-semibold mb-2">Corrección y optimización</h2>
-          <p>Recibe alertas sobre errores técnicos y consejos prácticos para mejorar cada palada.</p>
+
+        {/* VIDEO REFERENCIA */}
+        <div className="bg-white rounded-xl p-4 text-black">
+          <h3 className="font-semibold mb-2">Referencia</h3>
+          {referenceVideo ? (
+            <video src={referenceVideo} controls className="w-full rounded" />
+          ) : (
+            <p>Selecciona un vídeo de referencia</p>
+          )}
         </div>
-        <div>
-          <h2 className="text-2xl font-semibold mb-2">Rendimiento máximo</h2>
-          <p>Ayuda a maximizar la eficiencia de cada remada y hacer que tu entrenamiento sea más efectivo.</p>
-        </div>
-        <div>
-          <h2 className="text-2xl font-semibold mb-2">Para todos los niveles</h2>
-          <p>Diseñado para remeros principiantes, avanzados, entrenadores y equipos completos.</p>
-        </div>
+
       </div>
     </div>
   );
