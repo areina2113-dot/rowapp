@@ -1,67 +1,80 @@
-import React, { useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 
 export default function App() {
-  const [userVideo, setUserVideo] = useState(null);
-  const [referenceVideo, setReferenceVideo] = useState("");
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [videoSrc, setVideoSrc] = useState(null);
 
   const handleUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
-      setUserVideo(URL.createObjectURL(file));
+      setVideoSrc(URL.createObjectURL(file));
     }
   };
 
+  useEffect(() => {
+    if (!videoSrc || !window.Pose) return;
+
+    const pose = new window.Pose({
+      locateFile: (file) =>
+        `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+    });
+
+    pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+    });
+
+    pose.onResults((results) => {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext("2d");
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+      if (results.poseLandmarks) {
+        results.poseLandmarks.forEach((point) => {
+          ctx.beginPath();
+          ctx.arc(
+            point.x * canvas.width,
+            point.y * canvas.height,
+            5,
+            0,
+            2 * Math.PI
+          );
+          ctx.fillStyle = "red";
+          ctx.fill();
+        });
+      }
+    });
+
+    const video = videoRef.current;
+
+    video.onloadeddata = () => {
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      const processFrame = async () => {
+        if (video.paused || video.ended) return;
+        await pose.send({ image: video });
+        requestAnimationFrame(processFrame);
+      };
+
+      video.play();
+      processFrame();
+    };
+  }, [videoSrc]);
+
   return (
-    <div className="min-h-screen bg-gradient-to-r from-blue-400 to-blue-600 text-white p-6">
-      
-      {/* HEADER */}
-      <div className="text-center mb-10">
-        <h1 className="text-5xl font-bold">RowXia</h1>
-        <p className="text-xl mt-2">“Understand your stroke”</p>
-      </div>
+    <div className="min-h-screen bg-blue-500 p-6 text-center text-white">
+      <h1 className="text-4xl font-bold mb-6">RowXia</h1>
 
-      {/* SUBIDA DE VIDEO */}
-      <div className="bg-white text-gray-800 rounded-xl p-6 max-w-3xl mx-auto shadow-lg mb-8">
-        <h2 className="text-2xl font-semibold mb-4">Sube tu vídeo</h2>
-        <input type="file" accept="video/*" onChange={handleUpload} />
-      </div>
+      <input type="file" accept="video/*" onChange={handleUpload} />
 
-      {/* SELECTOR DE VIDEO DE REFERENCIA */}
-      <div className="bg-white text-gray-800 rounded-xl p-6 max-w-3xl mx-auto shadow-lg mb-8">
-        <h2 className="text-2xl font-semibold mb-4">Vídeo de referencia</h2>
-        <select
-          className="w-full p-2 border rounded"
-          onChange={(e) => setReferenceVideo(e.target.value)}
-        >
-          <option value="">Selecciona un vídeo</option>
-          <option value="/videos/concept2.mp4">Concept2 Técnica</option>
-          <option value="/videos/remo_espanol.mp4">Remo Español Técnica</option>
-        </select>
-      </div>
-
-      {/* COMPARADOR */}
-      <div className="grid md:grid-cols-2 gap-6 max-w-5xl mx-auto">
-        
-        {/* VIDEO USUARIO */}
-        <div className="bg-white rounded-xl p-4 text-black">
-          <h3 className="font-semibold mb-2">Tu vídeo</h3>
-          {userVideo ? (
-            <video src={userVideo} controls className="w-full rounded" />
-          ) : (
-            <p>No has subido ningún vídeo</p>
-          )}
-        </div>
-
-        {/* VIDEO REFERENCIA */}
-        <div className="bg-white rounded-xl p-4 text-black">
-          <h3 className="font-semibold mb-2">Referencia</h3>
-          {referenceVideo ? (
-            <video src={referenceVideo} controls className="w-full rounded" />
-          ) : (
-            <p>Selecciona un vídeo de referencia</p>
-          )}
-        </div>
-
+      <div className="mt-6">
+        <video ref={videoRef} src={videoSrc} className="hidden" />
+        <canvas ref={canvasRef} className="rounded shadow-lg" />
       </div>
     </div>
   );
