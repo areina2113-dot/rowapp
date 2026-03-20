@@ -6,21 +6,31 @@ export default function App() {
 
   const [videoSrc, setVideoSrc] = useState(null);
   const [phase, setPhase] = useState("Esperando...");
-  const [efficiency, setEfficiency] = useState(0);
+  const [score, setScore] = useState(0);
   const [feedback, setFeedback] = useState([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [mode, setMode] = useState("erg");
 
   const historyRef = useRef([]);
   const strokeRef = useRef([]);
-  const lastKneeRef = useRef(null);
+  const bestStrokeRef = useRef(null);
   const chartRef = useRef([]);
 
+  // 🔥 MODELOS POR TIPO DE REMO (CLAVE)
   const models = {
-    erg: { catch: 75 },
-    trainera: { catch: 85 },
-    coastal: { catch: 80 },
+    erg: { catch: 75, sequence: ["legs", "back", "arms"] },
+    rp3: { catch: 70, sequence: ["legs", "back", "arms"] },
+    banco_movil: { catch: 80, sequence: ["legs", "back", "arms"] },
+    banco_fijo: { catch: 85, sequence: ["back", "arms"] },
+    coastal: { catch: 78, sequence: ["legs", "back", "arms"] },
   };
+
+  // 🔥 CURVA IDEAL (élite simulada)
+  const idealCurve = Array.from({ length: 80 }, (_, i) => ({
+    legs: Math.sin((i / 80) * Math.PI) * 15,
+    back: Math.sin((i / 80) * Math.PI - 0.5) * 10,
+    arms: Math.sin((i / 80) * Math.PI - 1) * 8,
+  }));
 
   const handleUpload = (e) => {
     const file = e.target.files[0];
@@ -85,12 +95,12 @@ export default function App() {
       const lm = res.poseLandmarks;
 
       // 🔥 STICKMAN
-      const draw = (a, b) => {
+      const draw = (a, b, color = "#FFD700", w = 3) => {
         ctx.beginPath();
         ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
         ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
-        ctx.strokeStyle = "#FFD700";
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = w;
         ctx.stroke();
       };
 
@@ -115,48 +125,40 @@ export default function App() {
       history.push({ kneeAngle, trunkAngle, elbowAngle });
       if (history.length > 30) history.shift();
 
-      // 🔥 VELOCIDADES (CLAVE PARA GRAFICA)
+      // 🔥 VELOCIDAD (clave timing)
       if (history.length > 2) {
         const prev = history[history.length - 2];
         const curr = history[history.length - 1];
 
-        chartRef.current.push({
+        const vel = {
           legs: curr.kneeAngle - prev.kneeAngle,
           back: curr.trunkAngle - prev.trunkAngle,
           arms: curr.elbowAngle - prev.elbowAngle,
-        });
+        };
 
+        chartRef.current.push(vel);
         if (chartRef.current.length > 80) chartRef.current.shift();
       }
 
-      // 🔥 FASES
-      let currentPhase = "Analizando...";
-      if (history.length > 5) {
-        const prev = history[history.length - 2];
-        const curr = history[history.length - 1];
-        const vel = curr.kneeAngle - prev.kneeAngle;
-
-        if (curr.kneeAngle < models[mode].catch && Math.abs(vel) < 1)
-          currentPhase = "Catch";
-        else if (vel > 0) currentPhase = "Drive";
-        else if (curr.kneeAngle > 160) currentPhase = "Finish";
-        else if (vel < 0) currentPhase = "Recovery";
-      }
-
-      setPhase(currentPhase);
-
       // 🔥 DETECTAR PALADA
-      const lastKnee = lastKneeRef.current;
-
-      if (lastKnee !== null) {
-        if (kneeAngle < lastKnee && kneeAngle < models[mode].catch) {
-          analyzeStroke(strokeRef.current);
-          strokeRef.current = [];
-        }
+      if (kneeAngle < models[mode].catch && strokeRef.current.length > 10) {
+        analyzeStroke(strokeRef.current);
+        strokeRef.current = [];
       }
 
       strokeRef.current.push({ kneeAngle, trunkAngle, elbowAngle });
-      lastKneeRef.current = kneeAngle;
+
+      // 🔥 GHOST STROKE (mejor palada)
+      if (bestStrokeRef.current) {
+        bestStrokeRef.current.forEach((p, i) => {
+          if (i % 5 === 0) {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 2, 0, 2 * Math.PI);
+            ctx.fillStyle = "rgba(0,255,255,0.4)";
+            ctx.fill();
+          }
+        });
+      }
     });
 
     const video = videoRef.current;
@@ -178,39 +180,49 @@ export default function App() {
     };
   }, [videoSrc, mode]);
 
+  // 🔥 SCORING REAL DE TIMING
   function analyzeStroke(stroke) {
-    let score = 100;
+    let timingScore = 100;
     let errors = [];
 
-    stroke.forEach((f) => {
-      if (f.kneeAngle < 120 && f.trunkAngle > 0) {
-        errors.push("Espalda abre pronto");
-        score -= 25;
-      }
-      if (f.trunkAngle < 5 && f.elbowAngle < 150) {
-        errors.push("Brazos tiran pronto");
-        score -= 25;
-      }
-    });
+    let legsStart = stroke.findIndex((f) => f.kneeAngle > 130);
+    let backStart = stroke.findIndex((f) => f.trunkAngle > 10);
+    let armsStart = stroke.findIndex((f) => f.elbowAngle < 150);
 
-    if (errors.length === 0) errors.push("Secuencia correcta");
+    if (!(legsStart < backStart && backStart < armsStart)) {
+      errors.push("Timing incorrecto (secuencia rota)");
+      timingScore -= 40;
+    }
 
-    setEfficiency(score);
-    setFeedback(errors);
+    if (backStart - legsStart < 2) {
+      errors.push("Espalda abre demasiado pronto");
+      timingScore -= 20;
+    }
+
+    if (armsStart - backStart < 2) {
+      errors.push("Brazos entran demasiado pronto");
+      timingScore -= 20;
+    }
+
+    if (timingScore > score) {
+      bestStrokeRef.current = stroke;
+    }
+
+    setScore(timingScore);
+    setFeedback(errors.length ? errors : ["Timing perfecto"]);
   }
 
-  // 🔥 GRAFICA PRO (tipo RowerUp)
+  // 🔥 GRAFICA PRO CON CURVA IDEAL + ERRORES
   const renderGraph = () => {
     const data = chartRef.current;
     const width = 500;
     const height = 180;
 
-    const max = 20;
     const scaleX = width / (data.length || 1);
     const scaleY = 3;
 
-    const buildPath = (key) =>
-      data
+    const buildPath = (arr, key) =>
+      arr
         .map((d, i) => {
           const x = i * scaleX;
           const y = height / 2 - d[key] * scaleY;
@@ -220,9 +232,15 @@ export default function App() {
 
     return (
       <svg width={width} height={height} className="bg-[#0E2238] rounded">
-        <path d={buildPath("legs")} stroke="#00FF88" fill="none" />
-        <path d={buildPath("back")} stroke="#3399FF" fill="none" />
-        <path d={buildPath("arms")} stroke="#FF00AA" fill="none" />
+        {/* IDEAL */}
+        <path d={buildPath(idealCurve, "legs")} stroke="#00FF88" opacity={0.2} fill="none" />
+        <path d={buildPath(idealCurve, "back")} stroke="#3399FF" opacity={0.2} fill="none" />
+        <path d={buildPath(idealCurve, "arms")} stroke="#FF00AA" opacity={0.2} fill="none" />
+
+        {/* REAL */}
+        <path d={buildPath(data, "legs")} stroke="#00FF88" fill="none" />
+        <path d={buildPath(data, "back")} stroke="#3399FF" fill="none" />
+        <path d={buildPath(data, "arms")} stroke="#FF00AA" fill="none" />
       </svg>
     );
   };
@@ -238,8 +256,10 @@ export default function App() {
           className="mt-4 p-2 text-black"
           onChange={(e) => setMode(e.target.value)}
         >
-          <option value="erg">Ergómetro</option>
-          <option value="trainera">Trainera</option>
+          <option value="erg">Erg</option>
+          <option value="rp3">RP3</option>
+          <option value="banco_movil">Banco móvil</option>
+          <option value="banco_fijo">Banco fijo</option>
           <option value="coastal">Coastal</option>
         </select>
       </div>
@@ -264,15 +284,13 @@ export default function App() {
             </div>
 
             <div className="mt-4 bg-[#132B45] p-4 rounded w-[500px]">
-              <p>Fase: {phase}</p>
-              <p>Eficiencia: {efficiency}%</p>
+              <p>Score timing: {score}%</p>
 
               {feedback.map((f, i) => (
                 <p key={i} className="text-yellow-400">{f}</p>
               ))}
 
               <div className="mt-4">
-                <p className="text-sm mb-2">Speed & Sequence</p>
                 {renderGraph()}
               </div>
             </div>
