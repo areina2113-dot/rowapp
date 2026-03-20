@@ -1,23 +1,96 @@
 import React, { useRef, useState, useEffect } from "react";
 
+// 🧠 ANALISIS POR PALADA
+function analyzeStroke(stroke) {
+  if (stroke.length < 5) return null;
+
+  let errors = [];
+  let score = 100;
+
+  let earlyBack = false;
+  let earlyArms = false;
+
+  for (let i = 1; i < stroke.length; i++) {
+    const prev = stroke[i - 1];
+    const curr = stroke[i];
+
+    if (curr.kneeAngle < 120 && curr.trunkAngle > 0) {
+      earlyBack = true;
+    }
+
+    if (curr.trunkAngle < 5 && curr.elbowAngle < 150) {
+      earlyArms = true;
+    }
+  }
+
+  if (earlyBack) {
+    errors.push("Apertura prematura de espalda");
+    score -= 30;
+  }
+
+  if (earlyArms) {
+    errors.push("Brazos demasiado tempranos");
+    score -= 30;
+  }
+
+  if (errors.length === 0) {
+    errors.push("Secuencia correcta");
+  }
+
+  return {
+    score: Math.max(0, score),
+    errors,
+  };
+}
+
 export default function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
   const [videoSrc, setVideoSrc] = useState(null);
-  const [phase, setPhase] = useState("Esperando video...");
+  const [mode, setMode] = useState("erg");
+  const [phase, setPhase] = useState("Esperando...");
   const [feedback, setFeedback] = useState([]);
   const [efficiency, setEfficiency] = useState(100);
+
+  const [history, setHistory] = useState([]);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  // PALADAS
+  const [strokes, setStrokes] = useState([]);
+  const [currentStroke, setCurrentStroke] = useState([]);
+  const [lastKnee, setLastKnee] = useState(null);
 
   // 📂 SUBIR VIDEO
   const handleUpload = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setVideoSrc(URL.createObjectURL(file));
+    if (file) setVideoSrc(URL.createObjectURL(file));
+  };
+
+  // 🎮 CONTROLES VIDEO
+  const togglePlay = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (video.paused) {
+      video.play();
+      setIsPlaying(true);
+    } else {
+      video.pause();
+      setIsPlaying(false);
     }
   };
 
-  // 📐 FUNCIONES DE ÁNGULOS
+  const stepFrame = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.pause();
+    setIsPlaying(false);
+    video.currentTime += 0.03;
+  };
+
+  // 📐 ANGULOS
   function getAngle(A, B, C) {
     const AB = { x: A.x - B.x, y: A.y - B.y };
     const CB = { x: C.x - B.x, y: C.y - B.y };
@@ -26,17 +99,13 @@ export default function App() {
     const magAB = Math.sqrt(AB.x ** 2 + AB.y ** 2);
     const magCB = Math.sqrt(CB.x ** 2 + CB.y ** 2);
 
-    const angle = Math.acos(dot / (magAB * magCB));
-    return (angle * 180) / Math.PI;
+    return (Math.acos(dot / (magAB * magCB)) * 180) / Math.PI;
   }
 
   function angleToVertical(A, B) {
-    const dx = B.x - A.x;
-    const dy = B.y - A.y;
-    return (Math.atan2(dx, dy) * 180) / Math.PI;
+    return (Math.atan2(B.x - A.x, B.y - A.y) * 180) / Math.PI;
   }
 
-  // 🤖 IA
   useEffect(() => {
     if (!videoSrc || !window.Pose) return;
 
@@ -61,7 +130,6 @@ export default function App() {
 
       const lm = results.poseLandmarks;
 
-      // 🔴 DIBUJAR PUNTOS
       lm.forEach((p) => {
         ctx.beginPath();
         ctx.arc(p.x * canvas.width, p.y * canvas.height, 5, 0, 2 * Math.PI);
@@ -69,7 +137,6 @@ export default function App() {
         ctx.fill();
       });
 
-      // 🧠 KEYPOINTS (lado derecho)
       const shoulder = lm[12];
       const elbow = lm[14];
       const wrist = lm[16];
@@ -77,54 +144,57 @@ export default function App() {
       const knee = lm[26];
       const ankle = lm[28];
 
-      // 📐 ÁNGULOS
       const kneeAngle = getAngle(hip, knee, ankle);
       const trunkAngle = angleToVertical(hip, shoulder);
       const elbowAngle = getAngle(shoulder, elbow, wrist);
 
-      // 🟡 DETECCIÓN DE FASES
-      let currentPhase = "Analizando...";
+      // HISTORIAL
+      const frameData = { kneeAngle, trunkAngle, elbowAngle };
+      setHistory((prev) => [...prev.slice(-30), frameData]);
 
-      if (kneeAngle < 70) {
-        currentPhase = "Catch";
-      } else if (kneeAngle < 160 && trunkAngle < 10) {
-        currentPhase = "Drive";
-      } else if (kneeAngle >= 160 && trunkAngle > 5) {
-        currentPhase = "Finish";
-      } else {
-        currentPhase = "Recovery";
+      // PALADA ACTUAL
+      setCurrentStroke((prev) => [...prev, frameData]);
+
+      // DETECTAR NUEVA PALADA
+      if (lastKnee !== null) {
+        if (kneeAngle < lastKnee && kneeAngle < 80) {
+          if (currentStroke.length > 10) {
+            setStrokes((prev) => [...prev, currentStroke]);
+          }
+          setCurrentStroke([]);
+        }
+      }
+      setLastKnee(kneeAngle);
+
+      // FASES
+      let currentPhase = "Analizando...";
+      if (history.length > 5) {
+        const prev = history[history.length - 2];
+        const curr = history[history.length - 1];
+
+        const kneeVel = curr.kneeAngle - prev.kneeAngle;
+
+        if (curr.kneeAngle < 75 && Math.abs(kneeVel) < 1) {
+          currentPhase = "Catch";
+        } else if (kneeVel > 0 && curr.kneeAngle < 160) {
+          currentPhase = "Drive";
+        } else if (curr.kneeAngle >= 160) {
+          currentPhase = "Finish";
+        } else if (kneeVel < 0) {
+          currentPhase = "Recovery";
+        }
       }
 
       setPhase(currentPhase);
 
-      // ⚠️ FEEDBACK REAL
-      let errors = [];
-
-      if (kneeAngle < 130 && trunkAngle > 0) {
-        errors.push("❌ Abres la espalda demasiado pronto");
+      // ANALISIS POR PALADA
+      if (strokes.length > 0) {
+        const analysis = analyzeStroke(strokes[strokes.length - 1]);
+        if (analysis) {
+          setFeedback(analysis.errors);
+          setEfficiency(analysis.score);
+        }
       }
-
-      if (elbowAngle < 150 && kneeAngle < 140) {
-        errors.push("❌ Tiras con brazos demasiado pronto");
-      }
-
-      if (trunkAngle > 20) {
-        errors.push("❌ Exceso de inclinación hacia atrás");
-      }
-
-      if (errors.length === 0) {
-        errors.push("✅ Buena técnica");
-      }
-
-      setFeedback(errors);
-
-      // 📊 EFICIENCIA
-      let score = 100;
-      if (kneeAngle < 130 && trunkAngle > 0) score -= 30;
-      if (elbowAngle < 150 && kneeAngle < 140) score -= 30;
-      if (trunkAngle > 20) score -= 20;
-
-      setEfficiency(Math.max(0, score));
     });
 
     const video = videoRef.current;
@@ -141,68 +211,52 @@ export default function App() {
       };
 
       video.play();
+      setIsPlaying(true);
       loop();
     };
-  }, [videoSrc]);
+  }, [videoSrc, strokes]);
 
-  // 🎨 UI
   return (
     <div className="min-h-screen flex bg-[#0B1A2B] text-white">
+      <div className="w-64 bg-[#0E2238] p-6">
+        <h1 className="text-yellow-400 font-bold">ROWXIA</h1>
 
-      {/* SIDEBAR */}
-      <div className="w-64 bg-[#0E2238] p-6 flex flex-col justify-between">
-        <div>
-          <h1 className="text-xl font-bold mb-6 text-yellow-400">ROWXIA</h1>
-
-          <nav className="space-y-4">
-            <button className="w-full text-left bg-yellow-400 text-black px-4 py-2 rounded">
-              Dashboard
-            </button>
-            <button className="w-full text-left hover:text-yellow-400">
-              New Session
-            </button>
-          </nav>
-        </div>
-
-        <p className="text-xs opacity-50">ENGLISH</p>
+        <select
+          className="mt-4 p-2 text-black"
+          onChange={(e) => setMode(e.target.value)}
+        >
+          <option value="erg">Ergómetro</option>
+          <option value="coastal">Coastal</option>
+          <option value="trainera">Trainera</option>
+        </select>
       </div>
 
-      {/* MAIN */}
       <div className="flex-1 flex flex-col items-center justify-center">
-
         {!videoSrc ? (
-          <div className="text-center">
-            <h2 className="text-2xl mb-4">No sessions yet</h2>
-
-            <input type="file" accept="video/*" onChange={handleUpload} />
-
-            <p className="opacity-60 mt-2">
-              Upload a rowing video to start
-            </p>
-          </div>
+          <input type="file" accept="video/*" onChange={handleUpload} />
         ) : (
           <>
-            <canvas ref={canvasRef} className="rounded mb-6" />
+            <canvas ref={canvasRef} />
             <video ref={videoRef} src={videoSrc} className="hidden" />
 
-            <div className="bg-[#132B45] p-6 rounded-xl w-[400px] text-center">
+            <div className="flex gap-4 mt-4">
+              <button onClick={togglePlay}>
+                {isPlaying ? "Pause" : "Play"}
+              </button>
+              <button onClick={stepFrame}>Step</button>
+            </div>
 
-              <h2 className="text-lg">Fase</h2>
-              <p className="text-2xl text-yellow-400">{phase}</p>
+            <div className="mt-4 bg-[#132B45] p-4 rounded">
+              <p>Fase: {phase}</p>
+              <p>Eficiencia: {efficiency}%</p>
+              <p>Paladas: {strokes.length}</p>
 
-              <h2 className="mt-4">Eficiencia</h2>
-              <p>{efficiency}%</p>
-
-              <div className="mt-4">
-                {feedback.map((f, i) => (
-                  <p key={i}>{f}</p>
-                ))}
-              </div>
-
+              {feedback.map((f, i) => (
+                <p key={i}>{f}</p>
+              ))}
             </div>
           </>
         )}
-
       </div>
     </div>
   );
