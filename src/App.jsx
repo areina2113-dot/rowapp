@@ -5,16 +5,22 @@ export default function App() {
   const canvasRef = useRef(null);
 
   const [videoSrc, setVideoSrc] = useState(null);
-  const [phase, setPhase] = useState("Esperando vídeo...");
-  const [feedback, setFeedback] = useState([]);
+  const [phase, setPhase] = useState("Esperando...");
   const [efficiency, setEfficiency] = useState(0);
-  const [strokesCount, setStrokesCount] = useState(0);
+  const [feedback, setFeedback] = useState([]);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [mode, setMode] = useState("erg");
 
-  // 🔥 VARIABLES INTERNAS (CLAVE)
   const historyRef = useRef([]);
   const strokeRef = useRef([]);
   const lastKneeRef = useRef(null);
+  const chartRef = useRef([]);
+
+  const models = {
+    erg: { catch: 75 },
+    trainera: { catch: 85 },
+    coastal: { catch: 80 },
+  };
 
   const handleUpload = (e) => {
     const file = e.target.files[0];
@@ -36,8 +42,6 @@ export default function App() {
 
   const stepFrame = () => {
     const v = videoRef.current;
-    if (!v) return;
-
     v.pause();
     setIsPlaying(false);
     v.currentTime += 0.03;
@@ -80,13 +84,21 @@ export default function App() {
 
       const lm = res.poseLandmarks;
 
-      // 🔴 dibujo
-      lm.forEach((p) => {
+      // 🔥 STICKMAN
+      const draw = (a, b) => {
         ctx.beginPath();
-        ctx.arc(p.x * canvas.width, p.y * canvas.height, 4, 0, 2 * Math.PI);
-        ctx.fillStyle = "#FFD700";
-        ctx.fill();
-      });
+        ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
+        ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
+        ctx.strokeStyle = "#FFD700";
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      };
+
+      draw(lm[12], lm[14]);
+      draw(lm[14], lm[16]);
+      draw(lm[12], lm[24]);
+      draw(lm[24], lm[26]);
+      draw(lm[26], lm[28]);
 
       const shoulder = lm[12];
       const elbow = lm[14];
@@ -99,42 +111,46 @@ export default function App() {
       const trunkAngle = angleToVertical(hip, shoulder);
       const elbowAngle = getAngle(shoulder, elbow, wrist);
 
-      // 🔥 HISTORIAL REAL (NO STATE)
       const history = historyRef.current;
       history.push({ kneeAngle, trunkAngle, elbowAngle });
       if (history.length > 30) history.shift();
 
-      // 🔥 DETECCIÓN DE FASES REAL
-      let currentPhase = "Analizando...";
-
-      if (history.length > 5) {
+      // 🔥 VELOCIDADES (CLAVE PARA GRAFICA)
+      if (history.length > 2) {
         const prev = history[history.length - 2];
         const curr = history[history.length - 1];
 
-        const kneeVel = curr.kneeAngle - prev.kneeAngle;
+        chartRef.current.push({
+          legs: curr.kneeAngle - prev.kneeAngle,
+          back: curr.trunkAngle - prev.trunkAngle,
+          arms: curr.elbowAngle - prev.elbowAngle,
+        });
 
-        if (curr.kneeAngle < 75 && Math.abs(kneeVel) < 1) {
+        if (chartRef.current.length > 80) chartRef.current.shift();
+      }
+
+      // 🔥 FASES
+      let currentPhase = "Analizando...";
+      if (history.length > 5) {
+        const prev = history[history.length - 2];
+        const curr = history[history.length - 1];
+        const vel = curr.kneeAngle - prev.kneeAngle;
+
+        if (curr.kneeAngle < models[mode].catch && Math.abs(vel) < 1)
           currentPhase = "Catch";
-        } else if (kneeVel > 0 && curr.kneeAngle < 160) {
-          currentPhase = "Drive";
-        } else if (curr.kneeAngle >= 160) {
-          currentPhase = "Finish";
-        } else if (kneeVel < 0) {
-          currentPhase = "Recovery";
-        }
+        else if (vel > 0) currentPhase = "Drive";
+        else if (curr.kneeAngle > 160) currentPhase = "Finish";
+        else if (vel < 0) currentPhase = "Recovery";
       }
 
       setPhase(currentPhase);
 
-      // 🔥 DETECCIÓN DE PALADA REAL
+      // 🔥 DETECTAR PALADA
       const lastKnee = lastKneeRef.current;
 
       if (lastKnee !== null) {
-        if (kneeAngle < lastKnee && kneeAngle < 80) {
-          if (strokeRef.current.length > 10) {
-            analyzeStroke(strokeRef.current);
-            setStrokesCount((prev) => prev + 1);
-          }
+        if (kneeAngle < lastKnee && kneeAngle < models[mode].catch) {
+          analyzeStroke(strokeRef.current);
           strokeRef.current = [];
         }
       }
@@ -160,43 +176,72 @@ export default function App() {
       setIsPlaying(true);
       loop();
     };
-  }, [videoSrc]);
+  }, [videoSrc, mode]);
 
-  // 🧠 ANÁLISIS REAL
   function analyzeStroke(stroke) {
     let score = 100;
     let errors = [];
 
-    let earlyBack = false;
-    let earlyArms = false;
-
     stroke.forEach((f) => {
-      if (f.kneeAngle < 120 && f.trunkAngle > 0) earlyBack = true;
-      if (f.trunkAngle < 5 && f.elbowAngle < 150) earlyArms = true;
+      if (f.kneeAngle < 120 && f.trunkAngle > 0) {
+        errors.push("Espalda abre pronto");
+        score -= 25;
+      }
+      if (f.trunkAngle < 5 && f.elbowAngle < 150) {
+        errors.push("Brazos tiran pronto");
+        score -= 25;
+      }
     });
-
-    if (earlyBack) {
-      errors.push("Espalda abre demasiado pronto");
-      score -= 30;
-    }
-
-    if (earlyArms) {
-      errors.push("Brazos tiran demasiado pronto");
-      score -= 30;
-    }
 
     if (errors.length === 0) errors.push("Secuencia correcta");
 
+    setEfficiency(score);
     setFeedback(errors);
-    setEfficiency(Math.max(0, score));
   }
+
+  // 🔥 GRAFICA PRO (tipo RowerUp)
+  const renderGraph = () => {
+    const data = chartRef.current;
+    const width = 500;
+    const height = 180;
+
+    const max = 20;
+    const scaleX = width / (data.length || 1);
+    const scaleY = 3;
+
+    const buildPath = (key) =>
+      data
+        .map((d, i) => {
+          const x = i * scaleX;
+          const y = height / 2 - d[key] * scaleY;
+          return `${i === 0 ? "M" : "L"} ${x} ${y}`;
+        })
+        .join(" ");
+
+    return (
+      <svg width={width} height={height} className="bg-[#0E2238] rounded">
+        <path d={buildPath("legs")} stroke="#00FF88" fill="none" />
+        <path d={buildPath("back")} stroke="#3399FF" fill="none" />
+        <path d={buildPath("arms")} stroke="#FF00AA" fill="none" />
+      </svg>
+    );
+  };
 
   return (
     <div className="min-h-screen flex bg-[#0B1A2B] text-white">
 
       {/* SIDEBAR */}
       <div className="w-64 bg-black p-6">
-        <h1 className="text-yellow-400 text-xl font-bold">ROWXIA</h1>
+        <h1 className="text-yellow-400 font-bold text-xl">ROWXIA</h1>
+
+        <select
+          className="mt-4 p-2 text-black"
+          onChange={(e) => setMode(e.target.value)}
+        >
+          <option value="erg">Ergómetro</option>
+          <option value="trainera">Trainera</option>
+          <option value="coastal">Coastal</option>
+        </select>
       </div>
 
       {/* MAIN */}
@@ -218,18 +263,21 @@ export default function App() {
               </button>
             </div>
 
-            <div className="mt-4 bg-[#132B45] p-4 rounded w-[400px]">
+            <div className="mt-4 bg-[#132B45] p-4 rounded w-[500px]">
               <p>Fase: {phase}</p>
               <p>Eficiencia: {efficiency}%</p>
-              <p>Paladas: {strokesCount}</p>
 
               {feedback.map((f, i) => (
                 <p key={i} className="text-yellow-400">{f}</p>
               ))}
+
+              <div className="mt-4">
+                <p className="text-sm mb-2">Speed & Sequence</p>
+                {renderGraph()}
+              </div>
             </div>
           </>
         )}
-
       </div>
     </div>
   );
