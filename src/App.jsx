@@ -1,10 +1,128 @@
 import React, { useRef, useState, useEffect } from "react";
+// ===== 🧬 OLIMPIC + NATIONAL AI =====
 
+function buildOlympicModel() {
+  return {
+    fatigue: 0,
+    consistencyHistory: [],
+    powerTrend: [],
+    rhythmHistory: [],
+  };
+}
+
+function normalizeStroke(stroke) {
+  const len = stroke.length;
+  return stroke.map((frame, i) => ({
+    ...frame,
+    phase: i / (len - 1),
+  }));
+}
+
+const eliteProfiles = {
+  concept2: {
+    driveRatio: 0.42,
+    peakLegs: 15,
+    peakBack: 10,
+    peakArms: 8,
+  },
+  spanish: {
+    driveRatio: 0.45,
+    peakLegs: 16,
+    peakBack: 11,
+    peakArms: 9,
+  },
+};
+
+function classifyRowerStyle(stroke) {
+  let legs = 0, back = 0, arms = 0;
+
+  stroke.forEach(f => {
+    legs += Math.abs(f.kneeAngle);
+    back += Math.abs(f.trunkAngle);
+    arms += Math.abs(f.elbowAngle);
+  });
+
+  if (legs > back && legs > arms) return "Piernas dominante";
+  if (back > legs && back > arms) return "Espalda dominante";
+  return "Brazos dominante";
+}
+
+function compareToElite(stroke, profile) {
+  const normalized = normalizeStroke(stroke);
+  let error = 0;
+
+  normalized.forEach(f => {
+    error += Math.abs(f.kneeAngle - profile.peakLegs);
+    error += Math.abs(f.trunkAngle - profile.peakBack);
+    error += Math.abs(f.elbowAngle - profile.peakArms);
+  });
+
+  return Math.round(error / normalized.length);
+}
+
+function advancedTechnicalErrors(stroke) {
+  let errors = [];
+
+  if (stroke.find(f => f.elbowAngle < 140 && f.kneeAngle < 130))
+    errors.push("Brazos demasiado tempranos");
+
+  if (stroke.every(f => f.kneeAngle < 150))
+    errors.push("Drive débil");
+
+  if (stroke.some(f => f.trunkAngle > 25))
+    errors.push("Exceso inclinación");
+
+  return errors;
+}
+
+function estimateAdvancedPower(stroke) {
+  let power = 0;
+
+  for (let i = 1; i < stroke.length; i++) {
+    power +=
+      Math.abs(stroke[i].kneeAngle - stroke[i - 1].kneeAngle) * 0.5 +
+      Math.abs(stroke[i].trunkAngle - stroke[i - 1].trunkAngle) * 0.3 +
+      Math.abs(stroke[i].elbowAngle - stroke[i - 1].elbowAngle) * 0.2;
+  }
+
+  return Math.round(power);
+}
+
+function calculateDriveRecoveryRatio(stroke) {
+  const mid = Math.floor(stroke.length * 0.4);
+  return (mid / (stroke.length - mid)).toFixed(2);
+}
+
+function detectFatigue(history) {
+  if (history.length < 5) return 0;
+
+  const last = history.slice(-3).reduce((a, b) => a + b, 0) / 3;
+  const prev = history.slice(-6, -3).reduce((a, b) => a + b, 0) / 3;
+
+  return prev - last;
+}
+
+function predictPerformance(score, power, spm) {
+  return Math.round(score * 0.5 + power * 0.3 + spm * 0.2);
+}
 export default function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
   const [videoSrc, setVideoSrc] = useState(null);
+  // ===== 👤 USER SYSTEM =====
+const [user, setUser] = useState({
+  name: "Athlete",
+  sessions: [],
+});
+
+// ===== ⏱️ SPM =====
+const [spm, setSpm] = useState(0);
+const strokeTimesRef = useRef([]);
+
+// ===== 🧬 AI =====
+const olympicAIRef = useRef(buildOlympicModel());
+const athleteProfileRef = useRef(null);
   const [phase, setPhase] = useState("Esperando...");
   const [score, setScore] = useState(0);
   const [feedback, setFeedback] = useState([]);
@@ -72,7 +190,16 @@ export default function App() {
 
   useEffect(() => {
     if (!videoSrc || !window.Pose) return;
+// guardar
+useEffect(() => {
+  localStorage.setItem("rowxia_user", JSON.stringify(user));
+}, [user]);
 
+// cargar
+useEffect(() => {
+  const saved = localStorage.getItem("rowxia_user");
+  if (saved) setUser(JSON.parse(saved));
+}, []);
     const pose = new window.Pose({
       locateFile: (file) =>
         `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
@@ -145,7 +272,20 @@ export default function App() {
         analyzeStroke(strokeRef.current);
         strokeRef.current = [];
       }
+const now = Date.now();
+strokeTimesRef.current.push(now);
 
+if (strokeTimesRef.current.length > 10) {
+  strokeTimesRef.current.shift();
+}
+
+if (strokeTimesRef.current.length > 2) {
+  const diff =
+    strokeTimesRef.current[strokeTimesRef.current.length - 1] -
+    strokeTimesRef.current[0];
+
+  setSpm(Math.round((strokeTimesRef.current.length / diff) * 60000));
+}
       strokeRef.current.push({ kneeAngle, trunkAngle, elbowAngle });
 
       // 🔥 GHOST STROKE (mejor palada)
@@ -181,7 +321,53 @@ export default function App() {
   }, [videoSrc, mode]);
 
   // 🔥 SCORING REAL DE TIMING
-  function analyzeStroke(stroke) {
+  function analyzeStroke(stroke) {const power = estimateAdvancedPower(stroke);
+const ratio = calculateDriveRecoveryRatio(stroke);
+const style = classifyRowerStyle(stroke);
+const eliteError = compareToElite(stroke, eliteProfiles.spanish);
+const advancedErrors = advancedTechnicalErrors(stroke);
+
+// fatiga
+olympicAIRef.current.powerTrend.push(power);
+if (olympicAIRef.current.powerTrend.length > 20)
+  olympicAIRef.current.powerTrend.shift();
+
+const fatigue = detectFatigue(olympicAIRef.current.powerTrend);
+
+// score final
+const finalScore = Math.round(
+  score * 0.4 + power * 0.2 + (100 - eliteError) * 0.4
+);
+
+// predicción
+const prediction = predictPerformance(finalScore, power, spm);
+
+// guardar sesión
+setUser(prev => ({
+  ...prev,
+  sessions: [
+    ...prev.sessions,
+    {
+      date: new Date().toISOString(),
+      score: finalScore,
+      power,
+      spm,
+      fatigue,
+    },
+  ],
+}));
+
+// feedback
+setFeedback([
+  ...advancedErrors,
+  `Estilo: ${style}`,
+  `Error vs élite: ${eliteError}`,
+  `Potencia: ${power}`,
+  `SPM: ${spm}`,
+  `Ratio: ${ratio}`,
+  `Fatiga: ${Math.round(fatigue)}`,
+  `Predicción: ${prediction}`,
+]);
     let timingScore = 100;
     let errors = [];
 
@@ -282,6 +468,18 @@ export default function App() {
                 Step
               </button>
             </div>
+            <button
+  onClick={() => {
+    const blob = new Blob([JSON.stringify(user)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "rowxia_data.json";
+    a.click();
+  }}
+  className="bg-green-400 text-black px-4 py-2 rounded"
+>
+  Exportar datos
+</button>
 
             <div className="mt-4 bg-[#132B45] p-4 rounded w-[500px]">
               <p>Score timing: {score}%</p>
@@ -293,6 +491,21 @@ export default function App() {
               <div className="mt-4">
                 {renderGraph()}
               </div>
+              <div className="mt-6 bg-[#132B45] p-4 rounded w-[500px]">
+  <p className="text-yellow-400">Progreso</p>
+
+  <p>Total sesiones: {user.sessions.length}</p>
+
+  <p>
+    Score medio:{" "}
+    {user.sessions.length
+      ? Math.round(
+          user.sessions.reduce((a, b) => a + b.score, 0) /
+            user.sessions.length
+        )
+      : 0}
+  </p>
+</div>
             </div>
           </>
         )}
