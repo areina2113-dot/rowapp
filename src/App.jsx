@@ -1,102 +1,26 @@
 import React, { useRef, useState, useEffect } from "react";
 
-// ===== 🧬 OLIMPIC + NATIONAL AI =====
+// ===== IA =====
 function buildOlympicModel() {
-  return {
-    fatigue: 0,
-    powerTrend: [],
-  };
-}
-
-function normalizeStroke(stroke) {
-  const len = stroke.length;
-  return stroke.map((frame, i) => ({
-    ...frame,
-    phase: i / (len - 1),
-  }));
-}
-
-const eliteProfiles = {
-  spanish: {
-    peakLegs: 16,
-    peakBack: 11,
-    peakArms: 9,
-  },
-};
-
-function classifyRowerStyle(stroke) {
-  let legs = 0,
-    back = 0,
-    arms = 0;
-
-  stroke.forEach((f) => {
-    legs += Math.abs(f.kneeAngle);
-    back += Math.abs(f.trunkAngle);
-    arms += Math.abs(f.elbowAngle);
-  });
-
-  if (legs > back && legs > arms) return "Piernas dominante";
-  if (back > legs && back > arms) return "Espalda dominante";
-  return "Brazos dominante";
-}
-
-function compareToElite(stroke, profile) {
-  const normalized = normalizeStroke(stroke);
-  let error = 0;
-
-  normalized.forEach((f) => {
-    error += Math.abs(f.kneeAngle - profile.peakLegs);
-    error += Math.abs(f.trunkAngle - profile.peakBack);
-    error += Math.abs(f.elbowAngle - profile.peakArms);
-  });
-
-  return Math.round(error / normalized.length);
-}
-
-function advancedTechnicalErrors(stroke) {
-  let errors = [];
-
-  if (stroke.find((f) => f.elbowAngle < 140 && f.kneeAngle < 130))
-    errors.push("Brazos demasiado tempranos");
-
-  if (stroke.every((f) => f.kneeAngle < 150))
-    errors.push("Drive débil");
-
-  if (stroke.some((f) => f.trunkAngle > 25))
-    errors.push("Exceso inclinación");
-
-  return errors;
+  return { powerTrend: [] };
 }
 
 function estimateAdvancedPower(stroke) {
   let power = 0;
-
   for (let i = 1; i < stroke.length; i++) {
     power +=
       Math.abs(stroke[i].kneeAngle - stroke[i - 1].kneeAngle) * 0.5 +
       Math.abs(stroke[i].trunkAngle - stroke[i - 1].trunkAngle) * 0.3 +
       Math.abs(stroke[i].elbowAngle - stroke[i - 1].elbowAngle) * 0.2;
   }
-
   return Math.round(power);
-}
-
-function calculateDriveRecoveryRatio(stroke) {
-  const mid = Math.floor(stroke.length * 0.4);
-  return (mid / (stroke.length - mid)).toFixed(2);
 }
 
 function detectFatigue(history) {
   if (history.length < 5) return 0;
-
   const last = history.slice(-3).reduce((a, b) => a + b, 0) / 3;
   const prev = history.slice(-6, -3).reduce((a, b) => a + b, 0) / 3;
-
   return prev - last;
-}
-
-function predictPerformance(score, power, spm) {
-  return Math.round(score * 0.5 + power * 0.3 + spm * 0.2);
 }
 
 export default function App() {
@@ -104,34 +28,36 @@ export default function App() {
   const canvasRef = useRef(null);
 
   const [videoSrc, setVideoSrc] = useState(null);
-
-  const [user, setUser] = useState({
-    name: "Athlete",
-    sessions: [],
-  });
-
-  const [spm, setSpm] = useState(0);
-  const strokeTimesRef = useRef([]);
-
-  const olympicAIRef = useRef(buildOlympicModel());
-
   const [score, setScore] = useState(0);
   const [feedback, setFeedback] = useState([]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [mode, setMode] = useState("erg");
+
+  const [user, setUser] = useState({ name: "Athlete", sessions: [] });
+
+  const [spm, setSpm] = useState(0);
+  const strokeTimesRef = useRef([]);
 
   const historyRef = useRef([]);
   const strokeRef = useRef([]);
   const bestStrokeRef = useRef(null);
   const chartRef = useRef([]);
 
+  const olympicAIRef = useRef(buildOlympicModel());
+
   const models = {
     erg: { catch: 75 },
-    rp3: { catch: 70 },
+    coastal: { catch: 78 },
     banco_movil: { catch: 80 },
     banco_fijo: { catch: 85 },
-    coastal: { catch: 78 },
+    rp3: { catch: 70 },
   };
+
+  const idealCurve = Array.from({ length: 80 }, (_, i) => ({
+    legs: Math.sin((i / 80) * Math.PI) * 15,
+    back: Math.sin((i / 80) * Math.PI - 0.5) * 10,
+    arms: Math.sin((i / 80) * Math.PI - 1) * 8,
+  }));
 
   const handleUpload = (e) => {
     const file = e.target.files[0];
@@ -152,6 +78,7 @@ export default function App() {
     v.currentTime += 0.03;
   };
 
+  // LOCAL STORAGE
   useEffect(() => {
     localStorage.setItem("rowxia_user", JSON.stringify(user));
   }, [user]);
@@ -169,10 +96,7 @@ export default function App() {
         `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
     });
 
-    pose.setOptions({
-      modelComplexity: 1,
-      smoothLandmarks: true,
-    });
+    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true });
 
     pose.onResults((res) => {
       const canvas = canvasRef.current;
@@ -190,12 +114,30 @@ export default function App() {
       const shoulder = lm[12];
       const elbow = lm[14];
       const wrist = lm[16];
-      const ankle = lm[28];
 
       const kneeAngle = Math.abs(knee.y - hip.y) * 180;
       const trunkAngle = Math.abs(shoulder.y - hip.y) * 180;
       const elbowAngle = Math.abs(wrist.y - elbow.y) * 180;
 
+      // 🔥 HISTORIAL (GRÁFICA)
+      const history = historyRef.current;
+      history.push({ kneeAngle, trunkAngle, elbowAngle });
+      if (history.length > 30) history.shift();
+
+      if (history.length > 2) {
+        const prev = history[history.length - 2];
+        const curr = history[history.length - 1];
+
+        chartRef.current.push({
+          legs: curr.kneeAngle - prev.kneeAngle,
+          back: curr.trunkAngle - prev.trunkAngle,
+          arms: curr.elbowAngle - prev.elbowAngle,
+        });
+
+        if (chartRef.current.length > 80) chartRef.current.shift();
+      }
+
+      // DETECTAR PALADA + SPM REAL
       if (kneeAngle < models[mode].catch && strokeRef.current.length > 10) {
         analyzeStroke(strokeRef.current);
 
@@ -219,6 +161,7 @@ export default function App() {
 
       strokeRef.current.push({ kneeAngle, trunkAngle, elbowAngle });
 
+      // 🔥 GHOST STROKE
       if (bestStrokeRef.current) {
         bestStrokeRef.current.forEach((p, i) => {
           if (i % 5 === 0) {
@@ -260,10 +203,6 @@ export default function App() {
     let timingScore = 100;
 
     const power = estimateAdvancedPower(stroke);
-    const ratio = calculateDriveRecoveryRatio(stroke);
-    const style = classifyRowerStyle(stroke);
-    const eliteError = compareToElite(stroke, eliteProfiles.spanish);
-    const advancedErrors = advancedTechnicalErrors(stroke);
 
     olympicAIRef.current.powerTrend.push(power);
     if (olympicAIRef.current.powerTrend.length > 20)
@@ -271,11 +210,7 @@ export default function App() {
 
     const fatigue = detectFatigue(olympicAIRef.current.powerTrend);
 
-    const finalScore = Math.round(
-      timingScore * 0.4 + power * 0.2 + (100 - eliteError) * 0.4
-    );
-
-    const prediction = predictPerformance(finalScore, power, spm);
+    const finalScore = Math.round(timingScore * 0.6 + power * 0.4);
 
     if (!bestStrokeRef.current || finalScore > score) {
       bestStrokeRef.current = stroke;
@@ -285,23 +220,51 @@ export default function App() {
       ...prev,
       sessions: [
         ...prev.sessions,
-        { date: new Date().toISOString(), score: finalScore, power, spm },
+        { score: finalScore, power, spm },
       ],
     }));
 
     setScore(finalScore);
 
     setFeedback([
-      ...advancedErrors,
-      `Estilo: ${style}`,
-      `Error vs élite: ${eliteError}`,
       `Potencia: ${power}`,
       `SPM: ${spm}`,
-      `Ratio: ${ratio}`,
       `Fatiga: ${Math.round(fatigue)}`,
-      `Predicción: ${prediction}`,
     ]);
   }
+
+  // 🔥 GRAFICA ROWERUP STYLE
+  const renderGraph = () => {
+    const data = chartRef.current;
+    const width = 500;
+    const height = 180;
+
+    const scaleX = width / (data.length || 1);
+    const scaleY = 3;
+
+    const buildPath = (arr, key) =>
+      arr
+        .map((d, i) => {
+          const x = i * scaleX;
+          const y = height / 2 - d[key] * scaleY;
+          return `${i === 0 ? "M" : "L"} ${x} ${y}`;
+        })
+        .join(" ");
+
+    return (
+      <svg width={width} height={height} className="bg-[#0E2238] rounded">
+        {/* IDEAL */}
+        <path d={buildPath(idealCurve, "legs")} stroke="#00FF88" opacity={0.2} fill="none" />
+        <path d={buildPath(idealCurve, "back")} stroke="#3399FF" opacity={0.2} fill="none" />
+        <path d={buildPath(idealCurve, "arms")} stroke="#FF00AA" opacity={0.2} fill="none" />
+
+        {/* REAL */}
+        <path d={buildPath(data, "legs")} stroke="#00FF88" fill="none" />
+        <path d={buildPath(data, "back")} stroke="#3399FF" fill="none" />
+        <path d={buildPath(data, "arms")} stroke="#FF00AA" fill="none" />
+      </svg>
+    );
+  };
 
   return (
     <div className="min-h-screen flex bg-[#0B1A2B] text-white">
@@ -331,6 +294,8 @@ export default function App() {
                 Exportar
               </button>
             </div>
+
+            <div className="mt-4">{renderGraph()}</div>
 
             <div className="mt-4">
               {feedback.map((f, i) => (
