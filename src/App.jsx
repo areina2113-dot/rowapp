@@ -1225,9 +1225,16 @@ if (peakEnergy / totalEnergy < 0.12) {
       <aside className="border-r border-white/10 bg-black/35 p-5">
        <div className="flex items-center gap-3">
   <img src="/logo.png" alt="logo" className="w-10 h-10" />
-  <h1 className="text-2xl font-bold tracking-wide text-yellow-400">
+  <div className="flex items-center gap-3">
+  <img
+    src="/logo.png"
+    alt="RowXia logo"
+    className="w-10 h-10 object-contain"
+  />
+
+  <span className="text-2xl font-bold tracking-wide text-yellow-400">
     ROWXIA
-  </h1>
+  </span>
 </div>
         <p className="mt-1 text-xs text-white/50">Olympic analysis build</p>
 
