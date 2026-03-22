@@ -416,7 +416,11 @@ function buildGraphLabelAtIndex(curve, index, component) {
   const val = item[component] || 0;
   return { phase: item.phase, value: val };
 }
-
+function smooth(value, prev, alpha = 0.7) {
+  if (prev === null) return value;
+  return alpha * prev + (1 - alpha) * value;
+}
+const spmSmoothRef = useRef(null);
 /* =========================
    Main App
 ========================= */
@@ -475,7 +479,11 @@ export default function App() {
 
   const techniqueLibrary = getTechniqueLibrary();
   const currentProfile = techniqueLibrary[mode] || techniqueLibrary.rowerg;
-
+const smoothRef = useRef({
+  knee: null,
+  trunk: null,
+  elbow: null,
+});
   useEffect(() => {
     try {
       window.localStorage.setItem("rowxia_user", JSON.stringify(user));
@@ -633,7 +641,32 @@ export default function App() {
     }
     const avgCurve = buildAverageCurve(userModelRef.current.strokes, 60);
     userModelRef.current.avgCurve = avgCurve;
+//Main Page
+     const [showIntro, setShowIntro] = useState(true);
 
+     if (showIntro) {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-[#0B1A2B] text-white">
+      <img src="/logo.png" alt="RowXia" className="w-32 mb-6" />
+
+      <h1 className="text-3xl font-bold text-yellow-400">
+        ROWXIA
+      </h1>
+
+      <p className="text-white/60 mt-2">
+        Understand your stroke
+      </p>
+
+      <button
+        onClick={() => setShowIntro(false)}
+        className="mt-6 bg-yellow-400 text-black px-6 py-2 rounded-xl font-semibold"
+      >
+        Empezar
+      </button>
+    </div>
+  );
+}
+     
     // Update best stroke
     if (finalScore > bestScoreRef.current) {
       bestScoreRef.current = finalScore;
@@ -645,17 +678,21 @@ export default function App() {
     }
 
     // Save stroke timestamps for SPM
-    strokeTimesRef.current.push(Date.now());
-    if (strokeTimesRef.current.length > 10) strokeTimesRef.current.shift();
+   strokeTimesRef.current.push(Date.now());
+if (strokeTimesRef.current.length > 12) strokeTimesRef.current.shift();
 
-    if (strokeTimesRef.current.length > 2) {
-      const diff =
-        strokeTimesRef.current[strokeTimesRef.current.length - 1] -
-        strokeTimesRef.current[0];
-      if (diff > 0) {
-        setSpm(Math.round((strokeTimesRef.current.length / diff) * 60000));
-      }
-    }
+if (strokeTimesRef.current.length > 3) {
+  const first = strokeTimesRef.current[0];
+  const last = strokeTimesRef.current[strokeTimesRef.current.length - 1];
+  const strokes = strokeTimesRef.current.length - 1;
+
+  const rawSpm = (strokes / (last - first)) * 60000;
+
+  const smoothSpm = smooth(rawSpm, spmSmoothRef.current, 0.85);
+  spmSmoothRef.current = smoothSpm;
+
+  setSpm(Math.round(smoothSpm));
+}
 
     // Session log (stroke-based)
     setUser((prev) => {
@@ -755,9 +792,19 @@ export default function App() {
       const knee = lm[26];
       const ankle = lm[28];
 
-      const kneeAngle = getAngle(hip, knee, ankle);
-      const trunkAngle = angleToVertical(hip, shoulder);
-      const elbowAngle = getAngle(shoulder, elbow, wrist);
+      const rawKnee = getAngle(hip, knee, ankle);
+const rawTrunk = angleToVertical(hip, shoulder);
+const rawElbow = getAngle(shoulder, elbow, wrist);
+
+const kneeAngle = smooth(rawKnee, smoothRef.current.knee);
+const trunkAngle = smooth(rawTrunk, smoothRef.current.trunk);
+const elbowAngle = smooth(rawElbow, smoothRef.current.elbow);
+
+smoothRef.current = {
+  knee: kneeAngle,
+  trunk: trunkAngle,
+  elbow: elbowAngle,
+};
 
       const prev = lastFrameRef.current;
 
@@ -997,6 +1044,60 @@ export default function App() {
       </svg>
     );
   }
+   function detectGraphErrors(actualCurve, idealCurve)
+   // Detect timing shift (muy clave)
+const peakActual = {
+  legs: findPeakIndex(actualCurve, "legs"),
+  back: findPeakIndex(actualCurve, "back"),
+  arms: findPeakIndex(actualCurve, "arms"),
+};
+
+const peakIdeal = {
+  legs: findPeakIndex(idealCurve, "legs"),
+  back: findPeakIndex(idealCurve, "back"),
+  arms: findPeakIndex(idealCurve, "arms"),
+};
+
+["legs", "back", "arms"].forEach((comp) => {
+  const shift = peakActual[comp] - peakIdeal[comp];
+
+  if (Math.abs(shift) > 4) {
+    markers.push({
+      index: peakActual[comp],
+      component: comp,
+      label:
+        shift > 0
+          ? `${comp} tardío`
+          : `${comp} demasiado temprano`,
+      diff: shift,
+    });
+  }
+});
+   // Detect curva demasiado plana o explosiva
+const totalEnergy = actualCurve.reduce(
+  (acc, p) => acc + Math.abs(p.legs) + Math.abs(p.back) + Math.abs(p.arms),
+  0
+);
+
+const peakEnergy = Math.max(
+  ...actualCurve.map((p) => Math.abs(p.legs) + Math.abs(p.back) + Math.abs(p.arms))
+);
+
+if (peakEnergy / totalEnergy > 0.25) {
+  markers.push({
+    index: findPeakIndex(actualCurve, "legs"),
+    component: "legs",
+    label: "Drive explosivo (poco sostenido)",
+  });
+}
+
+if (peakEnergy / totalEnergy < 0.12) {
+  markers.push({
+    index: findPeakIndex(actualCurve, "legs"),
+    component: "legs",
+    label: "Falta de pico de potencia",
+  });
+}
 
   function renderHandleGraph() {
     const width = 640;
@@ -1064,8 +1165,10 @@ export default function App() {
           <circle
             cx={current[Math.min(current.length - 1, Math.floor(current.length * ghostPhase))].x * width}
             cy={current[Math.min(current.length - 1, Math.floor(current.length * ghostPhase))].y * height}
-            r="5"
+            r="5.5"
             fill="#FFD700"
+  <animate attributeName="r" values="4;6;4" dur="1s" repeatCount="indefinite" />
+</circle>
           />
         )}
       </svg>
@@ -1113,9 +1216,19 @@ export default function App() {
 
   return (
     <div className="min-h-screen grid grid-cols-[280px_1fr] bg-[#0B1A2B] text-white">
+       <img
+  src="/logo.png"
+  alt="RowXia"
+  className="absolute top-4 right-6 w-16 opacity-90 z-50"
+/>
       {/* Sidebar */}
       <aside className="border-r border-white/10 bg-black/35 p-5">
-        <h1 className="text-2xl font-bold tracking-wide text-yellow-400">ROWXIA</h1>
+       <div className="flex items-center gap-3">
+  <img src="/logo.png" alt="logo" className="w-10 h-10" />
+  <h1 className="text-2xl font-bold tracking-wide text-yellow-400">
+    ROWXIA
+  </h1>
+</div>
         <p className="mt-1 text-xs text-white/50">Olympic analysis build</p>
 
         <div className="mt-5">
