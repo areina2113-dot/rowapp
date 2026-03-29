@@ -1,92 +1,75 @@
-// RowXia v4 ELITE - App.jsx
-// Arquitectura avanzada manteniendo espíritu original + mejoras PRO
-
-import React, { useEffect, useRef, useState } from "react";
-import { Pose } from "@mediapipe/pose";
-import { Camera } from "@mediapipe/camera_utils";
+import React, { useRef, useState, useEffect } from "react";
 
 export default function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const cameraRef = useRef(null);
 
-  const [isRunning, setIsRunning] = useState(false);
+  const [videoFile, setVideoFile] = useState(null);
+  const [playing, setPlaying] = useState(false);
   const [feedback, setFeedback] = useState([]);
-  const [points, setPoints] = useState([]);
+  const [motionData, setMotionData] = useState([]);
 
   // =========================
-  // INITIALIZE MEDIAPIPE
+  // LOAD VIDEO
   // =========================
-  useEffect(() => {
-    const pose = new Pose({
-      locateFile: (file) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
-    });
-
-    pose.setOptions({
-      modelComplexity: 1,
-      smoothLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    });
-
-    pose.onResults(onResults);
-
-    if (videoRef.current) {
-      cameraRef.current = new Camera(videoRef.current, {
-        onFrame: async () => {
-          await pose.send({ image: videoRef.current });
-        },
-        width: 640,
-        height: 480,
-      });
-    }
-  }, []);
+  const handleVideoUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setVideoFile(url);
+  };
 
   // =========================
-  // POSE RESULTS HANDLER
+  // ANALYSIS LOOP (SIMULATED AI)
   // =========================
-  function onResults(results) {
-    if (!results.poseLandmarks) return;
-
-    const landmarks = results.poseLandmarks;
-
-    // Example: track shoulders midpoint
-    const leftShoulder = landmarks[11];
-    const rightShoulder = landmarks[12];
-
-    const midX = (leftShoulder.x + rightShoulder.x) / 2;
-    const midY = (leftShoulder.y + rightShoulder.y) / 2;
-
+  const analyzeFrame = () => {
+    const video = videoRef.current;
     const canvas = canvasRef.current;
-    const x = midX * canvas.width;
-    const y = midY * canvas.height;
+    if (!video || !canvas) return;
 
-    setPoints((prev) => [...prev.slice(-200), { x, y }]);
+    const ctx = canvas.getContext("2d");
 
-    // Simple stroke heuristic (v4 placeholder engine)
-    analyzeStroke(landmarks);
-  }
+    // draw video frame
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-  // =========================
-  // STROKE ENGINE (SIMPLIFIED ELITE CORE)
-  // =========================
-  function analyzeStroke(landmarks) {
-    const leftElbow = landmarks[13];
-    const rightElbow = landmarks[14];
+    // simulate motion tracking by sampling brightness changes
+    const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = frame.data;
 
-    const elbowHeight = (leftElbow.y + rightElbow.y) / 2;
+    let motion = 0;
 
-    let msg = "Stable";
+    for (let i = 0; i < data.length; i += 40) {
+      motion += data[i]; // crude intensity sampling
+    }
 
-    if (elbowHeight < 0.4) msg = "Catch phase detected";
-    if (elbowHeight > 0.7) msg = "Finish phase detected";
+    setMotionData((prev) => [...prev.slice(-100), motion]);
+
+    // simple heuristic feedback
+    let msg = "Stable motion";
+
+    if (motion > 5000000) msg = "High movement detected";
+    if (motion < 2000000) msg = "Low movement / pause";
 
     setFeedback((prev) => [msg, ...prev.slice(0, 4)]);
-  }
+  };
 
   // =========================
-  // DRAW CANVAS
+  // VIDEO LOOP
+  // =========================
+  useEffect(() => {
+    let interval;
+
+    if (playing) {
+      interval = setInterval(() => {
+        analyzeFrame();
+      }, 100); // ~10 FPS analysis
+    }
+
+    return () => clearInterval(interval);
+  }, [playing]);
+
+  // =========================
+  // DRAW MOTION GRAPH (LIKE YOUR ORIGINAL VISUAL STYLE)
   // =========================
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -94,35 +77,43 @@ export default function App() {
 
     const ctx = canvas.getContext("2d");
 
-    function draw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const draw = () => {
+      ctx.strokeStyle = "#00ffcc";
+      ctx.lineWidth = 2;
 
-      if (points.length > 1) {
-        ctx.beginPath();
-        ctx.lineWidth = 3;
+      ctx.beginPath();
 
-        points.forEach((p, i) => {
-          if (i === 0) ctx.moveTo(p.x, p.y);
-          else ctx.lineTo(p.x, p.y);
-        });
+      motionData.forEach((m, i) => {
+        const x = (i / motionData.length) * canvas.width;
+        const y = canvas.height - (m % canvas.height);
 
-        ctx.stroke();
-      }
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
 
-      requestAnimationFrame(draw);
-    }
+      ctx.stroke();
+    };
 
     draw();
-  }, [points]);
+  }, [motionData]);
 
   // =========================
-  // START CAMERA
+  // CONTROLS
   // =========================
-  const startCamera = () => {
-    if (cameraRef.current) {
-      cameraRef.current.start();
-      setIsRunning(true);
-    }
+  const handlePlay = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.play();
+    setPlaying(true);
+  };
+
+  const handlePause = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    video.pause();
+    setPlaying(false);
   };
 
   // =========================
@@ -130,32 +121,38 @@ export default function App() {
   // =========================
   return (
     <div style={{ padding: 20, fontFamily: "sans-serif" }}>
-      <h1>RowXia v4 ELITE</h1>
+      <h1>RowXia v5 AI Coach (No Dependencies)</h1>
 
-      <div>
-        <video
-          ref={videoRef}
-          style={{ width: "320px", borderRadius: 12 }}
-          autoPlay
-          playsInline
-        />
+      <input type="file" accept="video/*" onChange={handleVideoUpload} />
 
+      {videoFile && (
+        <div style={{ marginTop: 20 }}>
+          <video
+            ref={videoRef}
+            src={videoFile}
+            width="320"
+            controls
+            style={{ borderRadius: 12 }}
+          />
+
+          <div>
+            <button onClick={handlePlay}>Play</button>
+            <button onClick={handlePause}>Pause</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 20 }}>
         <canvas
           ref={canvasRef}
           width={640}
-          height={480}
-          style={{ border: "1px solid #ccc", marginTop: 10 }}
+          height={360}
+          style={{ border: "1px solid #ccc" }}
         />
       </div>
 
-      <div style={{ marginTop: 10 }}>
-        <button onClick={startCamera}>
-          {isRunning ? "Running" : "Start Camera"}
-        </button>
-      </div>
-
       <div style={{ marginTop: 20 }}>
-        <h3>Feedback</h3>
+        <h3>Coach Feedback</h3>
         <ul>
           {feedback.map((f, i) => (
             <li key={i}>{f}</li>
