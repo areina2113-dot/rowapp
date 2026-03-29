@@ -185,12 +185,18 @@ export default function App() {
       <img src="/logo.png" className="absolute top-4 right-4 w-16" />
 
       {/* HEADER */}
-      <div className="text-center pt-10">
-        <h1 style={{ color: BRAND.accent }} className="text-4xl font-bold">
-          ROWXIA
-        </h1>
-        <p className="text-white/60">Understand your stroke</p>
-      </div>
+<div className="text-center pt-10">
+  <h1
+    style={{ color: BRAND.accent }}
+    className="text-3xl md:text-5xl font-bold tracking-wide"
+  >
+    ROWXIA
+  </h1>
+
+  <p className="text-white/60 mt-2 text-sm md:text-base">
+    AI Rowing Analysis · Understand your stroke
+  </p>
+</div>
 
       {/* UPLOAD */}
       {!videoSrc && (
@@ -202,17 +208,22 @@ export default function App() {
       {/* VIDEO */}
       {videoSrc && (
         <>
-          <canvas ref={canvasRef} className="mx-auto mt-6 rounded-xl" />
+         <div className="w-full max-w-4xl mx-auto mt-6">
+  <canvas
+    ref={canvasRef}
+    className="w-full h-auto rounded-2xl shadow-2xl bg-black"
+  />
+</div>
           <video ref={videoRef} src={videoSrc} className="hidden" />
 
           <div className="flex justify-center gap-4 mt-4">
-            <button onClick={togglePlay} className="bg-yellow-400 text-black px-4 py-2 rounded">
+            <button onClick={togglePlay}className="bg-yellow-400 text-black px-5 py-2 rounded-xl font-semibold shadow hover:scale-105 transition"
               {isPlaying ? "Pause" : "Play"}
             </button>
           </div>
 
           {/* METRICS */}
-          <div className="grid grid-cols-2 gap-4 mt-6 px-10">
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 mt-6">
             <Card title="Score" value={score} />
             <Card title="SPM" value={spm} />
             <Card title="Power" value={power} />
@@ -220,20 +231,28 @@ export default function App() {
           </div>
 
           {/* FEEDBACK */}
-          <div className="mt-6 px-10">
-            <div style={{ background: BRAND.card }} className="p-4 rounded-xl">
-              <p style={{ color: BRAND.accent }}>Feedback</p>
-              {feedback.map((f, i) => (
-                <p key={i}>{f}</p>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
+        <div className="mt-6">
+  <div
+    style={{ background: BRAND.card }}
+    className="p-4 rounded-2xl shadow-lg"
+  >
+    <p className="text-yellow-400 font-semibold mb-2">
+      AI Coach Feedback
+    </p>
 
+    {feedback.length ? (
+      feedback.map((f, i) => (
+        <p key={i} className="text-sm text-white/80">
+          • {f}
+        </p>
+      ))
+    ) : (
+      <p className="text-white/40 text-sm">
+        Analizando técnica...
+      </p>
+    )}
+  </div>
+</div>
 /* ===================== COMPONENT ===================== */
 function Card({ title, value }) {
   return (
