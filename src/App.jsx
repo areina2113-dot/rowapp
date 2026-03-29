@@ -1,141 +1,134 @@
-// App.jsx - RowXia (Optimized & Ready)
 import React, { useEffect, useRef, useState } from "react";
+import { Pose } from "@mediapipe/pose";
+import { Camera } from "@mediapipe/camera_utils";
+import { drawConnectors, drawLandmarks } from "@mediapipe/drawing_utils";
 
 export default function App() {
   // ================= STATE =================
   const [showIntro, setShowIntro] = useState(true);
-  const [isRecording, setIsRecording] = useState(false);
-  const [points, setPoints] = useState([]);
-  const [score, setScore] = useState(0);
-  const [spm, setSpm] = useState(0);
-  const [powerValue, setPowerValue] = useState(0);
-  const [fatigueValue, setFatigueValue] = useState(0);
+  const [videoFile, setVideoFile] = useState(null);
   const [sessions, setSessions] = useState([]);
+  const [analysis, setAnalysis] = useState("Esperando video...");
 
+  const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const animationRef = useRef(null);
+  const poseRef = useRef(null);
 
-  // ================= LOAD SAVED DATA =================
+  // ================= LOAD SESSIONS =================
   useEffect(() => {
     const saved = localStorage.getItem("rowxia_sessions");
-    if (saved) {
-      setSessions(JSON.parse(saved));
-    }
+    if (saved) setSessions(JSON.parse(saved));
   }, []);
 
   useEffect(() => {
     localStorage.setItem("rowxia_sessions", JSON.stringify(sessions));
   }, [sessions]);
 
-  // ================= DRAW =================
+  // ================= MEDIA PIPE INIT =================
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    if (!videoFile) return;
 
-    function draw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const videoElement = videoRef.current;
+    const canvasElement = canvasRef.current;
+    const ctx = canvasElement.getContext("2d");
 
-      ctx.beginPath();
-      ctx.strokeStyle = "#FFD700";
-      ctx.lineWidth = 3;
+    const pose = new Pose({
+      locateFile: (file) =>
+        `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+    });
 
-      points.forEach((p, i) => {
-        if (i === 0) ctx.moveTo(p.x, p.y);
-        else ctx.lineTo(p.x, p.y);
-      });
+    pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
 
-      ctx.stroke();
-      animationRef.current = requestAnimationFrame(draw);
+    pose.onResults(onResults);
+
+    poseRef.current = pose;
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await pose.send({ image: videoElement });
+      },
+      width: 640,
+      height: 480,
+    });
+
+    camera.start();
+
+    function onResults(results) {
+      ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      ctx.drawImage(
+        results.image,
+        0,
+        0,
+        canvasElement.width,
+        canvasElement.height
+      );
+
+      if (results.poseLandmarks) {
+        drawConnectors(ctx, results.poseLandmarks, Pose.POSE_CONNECTIONS, {
+          color: "#FFD700",
+          lineWidth: 2,
+        });
+
+        drawLandmarks(ctx, results.poseLandmarks, {
+          color: "#00FFCC",
+          lineWidth: 1,
+        });
+
+        analyzeStroke(results.poseLandmarks);
+      }
     }
 
-    draw();
-    return () => cancelAnimationFrame(animationRef.current);
-  }, [points]);
+    function analyzeStroke(landmarks) {
+      // Ejemplo simple biomecánico (puedes mejorarlo)
+      const leftShoulder = landmarks[11];
+      const rightShoulder = landmarks[12];
+      const leftWrist = landmarks[15];
 
-  // ================= SIMULATED TRACKING =================
-  useEffect(() => {
-    if (!isRecording) return;
+      const shoulderSlope =
+        Math.abs(leftShoulder.y - rightShoulder.y) * 100;
 
-    const interval = setInterval(() => {
-      setPoints((prev) => [
-        ...prev,
-        {
-          x: Math.random() * 400,
-          y: Math.random() * 300,
-        },
-      ]);
-
-      setSpm((prev) => prev + 1);
-      setPowerValue((prev) => prev + Math.random() * 2);
-      setFatigueValue((prev) => prev + 0.1);
-      setScore((prev) => prev + Math.random() * 5);
-    }, 500);
-
-    return () => clearInterval(interval);
-  }, [isRecording]);
-
-  // ================= WORKOUT AI =================
-  function generateWorkout(score, fatigue, spm) {
-    if (fatigue > 10) {
-      return "🟡 Sesión de recuperación + técnica ligera (UT2)";
+      if (shoulderSlope > 5) {
+        setAnalysis("⚠️ Inclinación excesiva de hombros");
+      } else if (leftWrist.y < leftShoulder.y) {
+        setAnalysis("✅ Buena fase de tracción detectada");
+      } else {
+        setAnalysis("🔄 Movimiento en fase de recuperación");
+      }
     }
 
-    if (score < 60) {
-      return "🔧 Drills técnicos + pausas largas (catch / sequencing)";
-    }
+    return () => {
+      camera.stop();
+    };
+  }, [videoFile]);
 
-    if (score < 80) {
-      return "⚡ Intervalos moderados (4x6 min @ r20-24)";
-    }
-
-    return "🔥 Alta intensidad (HIIT / race pace intervals)";
-  }
-
-  const workoutPlan = generateWorkout(score, fatigueValue, spm);
-
-  // ================= FINALIZE SESSION =================
-  function finalizeSession() {
+  // ================= SAVE SESSION =================
+  function saveSession() {
     const session = {
-      score,
-      spm,
-      power: powerValue,
-      fatigue: fatigueValue,
       date: new Date().toISOString(),
+      note: analysis,
     };
 
     setSessions((prev) => [...prev, session]);
-
-    setPoints([]);
-    setScore(0);
-    setSpm(0);
-    setPowerValue(0);
-    setFatigueValue(0);
   }
 
-  // ================= UI COMPONENT =================
-  function MetricCard({ title, value, subtitle }) {
-    return (
-      <div className="bg-[#132B45] rounded-2xl p-4 shadow-lg hover:scale-[1.02] transition">
-        <p className="text-white/60 text-sm">{title}</p>
-        <p className="text-2xl font-bold text-yellow-400">{value}</p>
-        {subtitle && <p className="text-xs text-white/50">{subtitle}</p>}
-      </div>
-    );
-  }
-
-  // ================= INTRO SCREEN =================
+  // ================= INTRO =================
   if (showIntro) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-[#0B1A2B] text-white">
-        <img src="/logo.png" alt="RowXia" className="w-32 mb-6" />
-
+        <img src="/logo.png" className="w-32 mb-6" />
         <h1 className="text-4xl font-bold text-yellow-400">ROWXIA</h1>
         <p className="text-white/60 mt-2">Understand your stroke</p>
 
         <button
           onClick={() => setShowIntro(false)}
-          className="mt-6 bg-yellow-400 text-black px-6 py-2 rounded-xl font-semibold hover:scale-105 transition"
+          className="mt-6 bg-yellow-400 text-black px-6 py-2 rounded-xl"
         >
           Empezar
         </button>
@@ -143,76 +136,67 @@ export default function App() {
     );
   }
 
-  // ================= MAIN APP =================
+  // ================= MAIN =================
   return (
     <div className="min-h-screen bg-[#0B1A2B] text-white p-4">
       {/* HEADER */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <img src="/logo.png" className="w-8" />
-          <h1 className="text-xl font-bold text-yellow-400">RowXia</h1>
-        </div>
-
-        <button
-          onClick={() => setIsRecording(!isRecording)}
-          className="bg-yellow-400 text-black px-4 py-2 rounded-xl"
-        >
-          {isRecording ? "Pause" : "Start"}
-        </button>
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-xl text-yellow-400 font-bold">RowXia</h1>
       </div>
 
-      {/* CANVAS */}
-      <canvas
-        ref={canvasRef}
-        width={500}
-        height={300}
-        className="bg-black rounded-2xl mb-4 w-full"
+      {/* VIDEO INPUT */}
+      <input
+        type="file"
+        accept="video/*"
+        onChange={(e) => {
+          const file = e.target.files[0];
+          setVideoFile(URL.createObjectURL(file));
+        }}
+        className="mb-4"
       />
 
-      {/* METRICS */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard title="Score" value={Math.round(score)} />
-        <MetricCard title="SPM" value={spm} />
-        <MetricCard title="Power" value={Math.round(powerValue)} />
-        <MetricCard title="Fatigue" value={Math.round(fatigueValue)} />
+      {/* VIDEO + CANVAS */}
+      <div className="relative">
+        <video
+          ref={videoRef}
+          src={videoFile}
+          className="hidden"
+          controls
+        />
+
+        <canvas
+          ref={canvasRef}
+          width={640}
+          height={480}
+          className="w-full rounded-2xl bg-black"
+        />
       </div>
 
-      {/* AI COACH */}
-      <div className="mt-6 bg-[#132B45] p-4 rounded-2xl">
-        <h3 className="text-yellow-400 font-semibold mb-2">IA Coach</h3>
-        <p>{workoutPlan}</p>
+      {/* ANALYSIS */}
+      <div className="mt-4 bg-[#132B45] p-4 rounded-xl">
+        <h2 className="text-yellow-400 font-semibold mb-2">
+          IA Analysis
+        </h2>
+        <p>{analysis}</p>
       </div>
 
-      {/* ACTIONS */}
-      <div className="flex gap-3 mt-4">
-        <button
-          onClick={finalizeSession}
-          className="bg-green-500 px-4 py-2 rounded-xl"
-        >
-          Save Session
-        </button>
-
-        <button
-          onClick={() => setPoints([])}
-          className="bg-red-500 px-4 py-2 rounded-xl"
-        >
-          Reset
-        </button>
-      </div>
+      {/* SAVE */}
+      <button
+        onClick={saveSession}
+        className="mt-4 bg-green-500 px-4 py-2 rounded-xl"
+      >
+        Save Analysis
+      </button>
 
       {/* HISTORY */}
       <div className="mt-6">
-        <h2 className="text-lg font-semibold mb-2">Sessions</h2>
-        <div className="space-y-2">
-          {sessions.map((s, i) => (
-            <div key={i} className="bg-[#132B45] p-3 rounded-xl text-sm">
-              <p>Score: {Math.round(s.score)}</p>
-              <p>SPM: {s.spm}</p>
-              <p>Power: {Math.round(s.power)}</p>
-              <p>Fatigue: {Math.round(s.fatigue)}</p>
-            </div>
-          ))}
-        </div>
+        <h2 className="mb-2 font-semibold">Sessions</h2>
+        {sessions.map((s, i) => (
+          <div key={i} className="bg-[#132B45] p-3 rounded-xl mb-2">
+            <p>{s.note}</p>
+            <p className="text-xs text-white/50">{s.date}</p>
+          </div>
+        ))}
       </div>
     </div>
   );
