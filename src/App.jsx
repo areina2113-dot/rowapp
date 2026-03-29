@@ -79,7 +79,8 @@ export default function App() {
     setScore(finalScore);
 
     const fb = [];
-    if (kneeRange < 30) fb.push("Poca extensión de piernas");
+   if (kneeRange < 40) fb.push("Poca extensión de piernas");
+if (kneeRange > 90) fb.push("Compresión excesiva");;
     if (powerVal < 40) fb.push("Falta potencia");
     if (timing < 15) fb.push("Drive muy corto");
 
@@ -123,11 +124,33 @@ export default function App() {
       strokeRef.current.push({ knee: kneeAngle });
 
       /* fases */
-      if (kneeAngle < 80) setPhase("Catch");
-      else if (kneeAngle > 120) setPhase("Drive");
-
+     if (kneeAngle < 95) setPhase("Catch");
+else if (kneeAngle > 140) setPhase("Drive");
+else setPhase("Recovery");
       /* detectar stroke */
-      if (kneeAngle < 80 && strokeRef.current.length > 15) {
+     const prev = strokeRef.current[strokeRef.current.length - 2];
+
+const isCatch = kneeAngle < 95;
+const wasDrive = prev ? prev.knee > 110 : false;
+
+// detectar transición real (drive → catch)
+if (isCatch && wasDrive && strokeRef.current.length > 12) {
+  finalizeStroke(strokeRef.current);
+  strokeRef.current = [];
+
+  timesRef.current.push(Date.now());
+
+  if (timesRef.current.length > 4) {
+    const dt =
+      timesRef.current[timesRef.current.length - 1] -
+      timesRef.current[0];
+
+    const strokes = timesRef.current.length - 1;
+    const rawSpm = (strokes / dt) * 60000;
+
+    setSpm(Math.round(rawSpm));
+  }
+}
         finalizeStroke(strokeRef.current);
         strokeRef.current = [];
 
