@@ -1,268 +1,245 @@
-import React, { useRef, useEffect, useState } from "react";
-import { Pose } from "@mediapipe/pose";
-import { Camera } from "@mediapipe/camera_utils";
+import React, { useEffect, useRef, useState } from "react";
 
+/* ===================== CONFIG ===================== */
+const BRAND = {
+  bg: "#0B1A2B",
+  card: "#132B45",
+  accent: "#FFD700",
+  accent2: "#00E0FF",
+};
+
+/* ===================== HELPERS ===================== */
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+const avg = (arr) => arr.reduce((a, b) => a + b, 0) / (arr.length || 1);
+
+function getAngle(A, B, C) {
+  const AB = { x: A.x - B.x, y: A.y - B.y };
+  const CB = { x: C.x - B.x, y: C.y - B.y };
+  const dot = AB.x * CB.x + AB.y * CB.y;
+  const magAB = Math.hypot(AB.x, AB.y);
+  const magCB = Math.hypot(CB.x, CB.y);
+  return Math.acos(clamp(dot / (magAB * magCB + 1e-6), -1, 1)) * 180 / Math.PI;
+}
+
+function angleToVertical(A, B) {
+  return Math.atan2(B.x - A.x, B.y - A.y) * 180 / Math.PI;
+}
+
+/* ===================== APP ===================== */
 export default function App() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const cameraRef = useRef(null);
 
   const [videoSrc, setVideoSrc] = useState(null);
-  const [isRunning, setIsRunning] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
 
-  const [phase, setPhase] = useState("Idle");
+  const [phase, setPhase] = useState("Esperando...");
+  const [spm, setSpm] = useState(0);
+  const [power, setPower] = useState(0);
+  const [score, setScore] = useState(0);
   const [feedback, setFeedback] = useState([]);
 
-  const [angles, setAngles] = useState({
-    knee: 0,
-    hip: 0,
-    elbow: 0,
-  });
+  const strokeRef = useRef([]);
+  const timesRef = useRef([]);
 
-  // 🆕 V8 STATES
-  const [score, setScore] = useState(0);
-  const [history, setHistory] = useState([]);
-  const [consistency, setConsistency] = useState(100);
-  const prevAnglesRef = useRef(null);
-
-  // =========================
-  // UTILS
-  // =========================
-  const getAngle = (A, B, C) => {
-    const AB = { x: A.x - B.x, y: A.y - B.y };
-    const CB = { x: C.x - B.x, y: C.y - B.y };
-    const dot = AB.x * CB.x + AB.y * CB.y;
-    const magAB = Math.hypot(AB.x, AB.y);
-    const magCB = Math.hypot(CB.x, CB.y);
-    const cos = dot / (magAB * magCB + 0.0001);
-    return (Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI;
+  /* ===================== VIDEO ===================== */
+  const handleUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setVideoSrc(URL.createObjectURL(file));
+    strokeRef.current = [];
+    timesRef.current = [];
   };
 
-  const angleToVertical = (A, B) => {
-    return (Math.atan2(B.x - A.x, B.y - A.y) * 180) / Math.PI;
+  const togglePlay = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      v.play();
+      setIsPlaying(true);
+    } else {
+      v.pause();
+      setIsPlaying(false);
+    }
   };
 
-  // =========================
-  // MEDIAPIPE
-  // =========================
+  /* ===================== AI ===================== */
+  function finalizeStroke(stroke) {
+    if (stroke.length < 10) return;
+
+    const kneeRange =
+      Math.max(...stroke.map(s => s.knee)) -
+      Math.min(...stroke.map(s => s.knee));
+
+    const powerVal = Math.round(kneeRange * 1.5);
+    const timing = stroke.length;
+    const finalScore = clamp(powerVal + timing, 0, 100);
+
+    setPower(powerVal);
+    setScore(finalScore);
+
+    const fb = [];
+    if (kneeRange < 30) fb.push("Poca extensión de piernas");
+    if (powerVal < 40) fb.push("Falta potencia");
+    if (timing < 15) fb.push("Drive muy corto");
+
+    setFeedback(fb);
+  }
+
+  /* ===================== POSE ===================== */
   useEffect(() => {
-    const pose = new Pose({
-      locateFile: (file) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+    if (!videoSrc || !window.Pose) return;
+
+    const pose = new window.Pose({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`,
     });
 
     pose.setOptions({
       modelComplexity: 1,
       smoothLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
     });
 
-    pose.onResults(onResults);
+    pose.onResults(res => {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext("2d");
 
-    if (videoRef.current) {
-      cameraRef.current = new Camera(videoRef.current, {
-        onFrame: async () => {
-          if (videoRef.current) {
-            await pose.send({ image: videoRef.current });
-          }
-        },
-        width: 640,
-        height: 480,
-      });
-    }
-  }, []);
+      ctx.drawImage(res.image, 0, 0, canvas.width, canvas.height);
 
-  // =========================
-  // CORE ANALYSIS
-  // =========================
-  function onResults(res) {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
+      if (!res.poseLandmarks) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(res.image, 0, 0, canvas.width, canvas.height);
+      const lm = res.poseLandmarks;
 
-    if (!res.poseLandmarks) return;
+      const hip = lm[24];
+      const knee = lm[26];
+      const ankle = lm[28];
+      const shoulder = lm[12];
+      const elbow = lm[14];
+      const wrist = lm[16];
 
-    const lm = res.poseLandmarks;
+      const kneeAngle = getAngle(hip, knee, ankle);
+      const trunk = angleToVertical(hip, shoulder);
+      const elbowAngle = getAngle(shoulder, elbow, wrist);
 
-    const shoulder = lm[12];
-    const elbow = lm[14];
-    const wrist = lm[16];
-    const hip = lm[24];
-    const knee = lm[26];
-    const ankle = lm[28];
+      strokeRef.current.push({ knee: kneeAngle });
 
-    const kneeAngle = getAngle(hip, knee, ankle);
-    const elbowAngle = getAngle(shoulder, elbow, wrist);
-    const hipAngle = angleToVertical(hip, shoulder);
+      /* fases */
+      if (kneeAngle < 80) setPhase("Catch");
+      else if (kneeAngle > 120) setPhase("Drive");
 
-    setAngles({
-      knee: Math.round(kneeAngle),
-      elbow: Math.round(elbowAngle),
-      hip: Math.round(hipAngle),
+      /* detectar stroke */
+      if (kneeAngle < 80 && strokeRef.current.length > 15) {
+        finalizeStroke(strokeRef.current);
+        strokeRef.current = [];
+
+        timesRef.current.push(Date.now());
+        if (timesRef.current.length > 5) {
+          const dt =
+            timesRef.current[timesRef.current.length - 1] -
+            timesRef.current[0];
+          const s = timesRef.current.length;
+          setSpm(Math.round((s / dt) * 60000));
+        }
+      }
+
+      /* stickman */
+      const draw = (a, b) => {
+        ctx.beginPath();
+        ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
+        ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
+        ctx.strokeStyle = BRAND.accent;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      };
+
+      draw(shoulder, elbow);
+      draw(elbow, wrist);
+      draw(shoulder, hip);
+      draw(hip, knee);
+      draw(knee, ankle);
     });
 
-    // =========================
-    // FASE
-    // =========================
-    let currentPhase = "Recovery";
+    const video = videoRef.current;
 
-    if (kneeAngle < 80) currentPhase = "Catch";
-    else if (kneeAngle > 100 && elbowAngle > 150) currentPhase = "Drive";
-    else if (elbowAngle < 120) currentPhase = "Finish";
+    video.onloadeddata = () => {
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
 
-    setPhase(currentPhase);
+      const loop = async () => {
+        if (video.paused) return;
+        await pose.send({ image: video });
+        requestAnimationFrame(loop);
+      };
 
-    // =========================
-    // AI COACH
-    // =========================
-    const tips = [];
-
-    if (elbowAngle < 140 && kneeAngle < 120)
-      tips.push("❌ Brazos demasiado pronto");
-
-    if (kneeAngle < 60)
-      tips.push("⚠️ Over-compression");
-
-    if (hipAngle > 30)
-      tips.push("⚠️ Layback excesivo");
-
-    if (tips.length === 0) tips.push("✅ Técnica estable");
-
-    setFeedback(tips);
-
-    // =========================
-    // SCORE
-    // =========================
-    let currentScore = 100;
-
-    if (elbowAngle < 140 && kneeAngle < 120) currentScore -= 20;
-    if (kneeAngle < 60) currentScore -= 15;
-    if (hipAngle > 30) currentScore -= 10;
-
-    currentScore = Math.max(0, currentScore);
-    setScore(currentScore);
-
-    // =========================
-    // CONSISTENCY
-    // =========================
-    if (prevAnglesRef.current) {
-      const diff =
-        Math.abs(prevAnglesRef.current.knee - kneeAngle) +
-        Math.abs(prevAnglesRef.current.elbow - elbowAngle);
-
-      setConsistency(Math.max(0, 100 - diff));
-    }
-
-    prevAnglesRef.current = {
-      knee: kneeAngle,
-      elbow: elbowAngle,
+      video.play();
+      setIsPlaying(true);
+      loop();
     };
+  }, [videoSrc]);
 
-    // =========================
-    // HISTORY
-    // =========================
-    setHistory((prev) => [
-      ...prev.slice(-50),
-      { score: currentScore },
-    ]);
-
-    // =========================
-    // STICKMAN
-    // =========================
-    const draw = (a, b) => {
-      ctx.beginPath();
-      ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
-      ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
-      ctx.strokeStyle = "#FFD700";
-      ctx.lineWidth = 3;
-      ctx.stroke();
-    };
-
-    draw(shoulder, elbow);
-    draw(elbow, wrist);
-    draw(shoulder, hip);
-    draw(hip, knee);
-    draw(knee, ankle);
-  }
-
-  // =========================
-  // VIDEO
-  // =========================
-  const handleUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setVideoSrc(URL.createObjectURL(file));
-  };
-
-  const start = () => {
-    if (cameraRef.current) {
-      cameraRef.current.start();
-      setIsRunning(true);
-    }
-  };
-
-  // =========================
-  // UI
-  // =========================
+  /* ===================== UI ===================== */
   return (
-    <div style={{ background: "#0B1A2B", minHeight: "100vh", color: "white" }}>
-      
+    <div style={{ background: BRAND.bg }} className="min-h-screen text-white">
+
+      {/* LOGO */}
+      <img src="/logo.png" className="absolute top-4 right-4 w-16" />
+
       {/* HEADER */}
-      <div style={{ display: "flex", alignItems: "center", padding: 20, gap: 15 }}>
-        <img src="/logo.png" alt="RowXia" style={{ height: 60 }} />
-        <h1 style={{ color: "#FFD700" }}>RowXia v8</h1>
+      <div className="text-center pt-10">
+        <h1 style={{ color: BRAND.accent }} className="text-4xl font-bold">
+          ROWXIA
+        </h1>
+        <p className="text-white/60">Understand your stroke</p>
       </div>
 
-      <div style={{ padding: 20 }}>
-
-        <input type="file" accept="video/*" onChange={handleUpload} />
-
-        {videoSrc && (
-          <>
-            <video ref={videoRef} src={videoSrc} autoPlay playsInline style={{ display: "none" }} />
-            <canvas ref={canvasRef} width={640} height={480} />
-          </>
-        )}
-
-        <button onClick={start} style={{ marginTop: 10 }}>
-          {isRunning ? "Running..." : "Start Analysis"}
-        </button>
-
-        {/* MÉTRICAS */}
-        <div style={{ marginTop: 20 }}>
-          <h3>Fase: {phase}</h3>
-          <p>Rodilla: {angles.knee}°</p>
-          <p>Codo: {angles.elbow}°</p>
-          <p>Cadera: {angles.hip}°</p>
-
-          <p>Score: {score}</p>
-          <p>Consistency: {Math.round(consistency)}%</p>
+      {/* UPLOAD */}
+      {!videoSrc && (
+        <div className="text-center mt-10">
+          <input type="file" accept="video/*" onChange={handleUpload} />
         </div>
+      )}
 
-        {/* FEEDBACK */}
-        <div style={{ marginTop: 20 }}>
-          <h3>AI Coach</h3>
-          {feedback.map((f, i) => (
-            <p key={i}>{f}</p>
-          ))}
-        </div>
+      {/* VIDEO */}
+      {videoSrc && (
+        <>
+          <canvas ref={canvasRef} className="mx-auto mt-6 rounded-xl" />
+          <video ref={videoRef} src={videoSrc} className="hidden" />
 
-        {/* PROGRESO */}
-        <div style={{ marginTop: 20 }}>
-          <h3>Progreso</h3>
-          <svg width="300" height="100">
-            {history.map((h, i) => {
-              const x = (i / 50) * 300;
-              const y = 100 - h.score;
-              return <circle key={i} cx={x} cy={y} r="2" fill="#FFD700" />;
-            })}
-          </svg>
-        </div>
+          <div className="flex justify-center gap-4 mt-4">
+            <button onClick={togglePlay} className="bg-yellow-400 text-black px-4 py-2 rounded">
+              {isPlaying ? "Pause" : "Play"}
+            </button>
+          </div>
 
-      </div>
+          {/* METRICS */}
+          <div className="grid grid-cols-2 gap-4 mt-6 px-10">
+            <Card title="Score" value={score} />
+            <Card title="SPM" value={spm} />
+            <Card title="Power" value={power} />
+            <Card title="Phase" value={phase} />
+          </div>
+
+          {/* FEEDBACK */}
+          <div className="mt-6 px-10">
+            <div style={{ background: BRAND.card }} className="p-4 rounded-xl">
+              <p style={{ color: BRAND.accent }}>Feedback</p>
+              {feedback.map((f, i) => (
+                <p key={i}>{f}</p>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ===================== COMPONENT ===================== */
+function Card({ title, value }) {
+  return (
+    <div style={{ background: "#132B45" }} className="p-4 rounded-xl">
+      <p className="text-white/60">{title}</p>
+      <p className="text-xl font-bold">{value}</p>
     </div>
   );
 }
